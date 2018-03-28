@@ -1247,6 +1247,17 @@ func TestDecrementUnderflowUint(t *testing.T) {
 	}
 }
 
+func TestDeleteLRU(t *testing.T) {
+	tc := New(Expiration(1*time.Second), CacheSize(1))
+	tc.Set("foo", 0, DefaultExpiration)
+	tc.Set("bar", 1, DefaultExpiration)
+	tc.Set("baz", 2, DefaultExpiration)
+	tc.DeleteLRU()
+	if tc.ItemCount() != 1 {
+		t.Error("tc.ItemCount() is not 1")
+	}
+}
+
 func TestOnEvicted(t *testing.T) {
 
 	works := false
@@ -1466,6 +1477,24 @@ func benchmarkCacheGet(b *testing.B, exp time.Duration) {
 	}
 }
 
+func BenchmarkCacheWithLRUGetExpiring(b *testing.B) {
+	benchmarkCacheWithLRUGet(b, 5*time.Minute, 10)
+}
+
+func BenchmarkCacheWithLRUGetNotExpiring(b *testing.B) {
+	benchmarkCacheWithLRUGet(b, NoExpiration, 10)
+}
+
+func benchmarkCacheWithLRUGet(b *testing.B, exp time.Duration, max int) {
+	b.StopTimer()
+	tc := New(Expiration(exp), CacheSize(max))
+	tc.Set("foo", "bar", DefaultExpiration)
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		tc.Get("foo")
+	}
+}
+
 func BenchmarkRWMutexMapGet(b *testing.B) {
 	b.StopTimer()
 	m := map[string]string{
@@ -1636,46 +1665,6 @@ func BenchmarkCacheSetDelete(b *testing.B) {
 	}
 }
 
-func BenchmarkRWMutexMapSetDelete(b *testing.B) {
-	b.StopTimer()
-	m := map[string]string{}
-	mu := sync.RWMutex{}
-	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		mu.Lock()
-		m["foo"] = "bar"
-		mu.Unlock()
-		mu.Lock()
-		delete(m, "foo")
-		mu.Unlock()
-	}
-}
-
-func BenchmarkCacheSetDeleteSingleLock(b *testing.B) {
-	b.StopTimer()
-	tc := New(Expiration(DefaultExpiration))
-	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		tc.mu.Lock()
-		tc.set("foo", "bar", DefaultExpiration)
-		tc.delete("foo")
-		tc.mu.Unlock()
-	}
-}
-
-func BenchmarkRWMutexMapSetDeleteSingleLock(b *testing.B) {
-	b.StopTimer()
-	m := map[string]string{}
-	mu := sync.RWMutex{}
-	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		mu.Lock()
-		m["foo"] = "bar"
-		delete(m, "foo")
-		mu.Unlock()
-	}
-}
-
 func BenchmarkIncrementInt(b *testing.B) {
 	b.StopTimer()
 	tc := New(Expiration(DefaultExpiration))
@@ -1688,7 +1677,7 @@ func BenchmarkIncrementInt(b *testing.B) {
 
 func BenchmarkDeleteExpiredLoop(b *testing.B) {
 	b.StopTimer()
-	tc := New(Expiration(5*time.Minute))
+	tc := New(Expiration(5 * time.Minute))
 	tc.mu.Lock()
 	for i := 0; i < 100000; i++ {
 		tc.set(strconv.Itoa(i), "bar", DefaultExpiration)
