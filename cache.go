@@ -203,6 +203,37 @@ func (c *cache) get(k string) (interface{}, bool) {
 	return item.Object, true
 }
 
+// Iterate every item by item handle items from cache,and if the handle returns to false,
+// it will be interrupted and return false.
+func (c *cache) Iterate(f func(key string, item Item) bool) bool {
+	now := time.Now().UnixNano()
+	c.mu.RLock()
+	keys := make([]string, len(c.items))
+	i := 0
+	for k, v := range c.items {
+		// "Inlining" of Expired
+		if v.Expiration > 0 && now > v.Expiration {
+			continue
+		}
+		keys[i] = k
+		i++
+	}
+	c.mu.RUnlock()
+	keys = keys[:i]
+	for _, key := range keys {
+		c.mu.RLock()
+		item, ok := c.items[key]
+		c.mu.RUnlock()
+		if !ok {
+			continue
+		}
+		if !f(key, item) {
+			return false
+		}
+	}
+	return true
+}
+
 // Increment an item of type int, int8, int16, int32, int64, uintptr, uint,
 // uint8, uint32, or uint64, float32 or float64 by n. Returns an error if the
 // item's value is not an integer, if it was not found, or if it is not
