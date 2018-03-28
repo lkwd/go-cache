@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime"
 	"time"
+	"sync"
 )
 
 // This is an experimental and unexported (for now) attempt at making a cache
@@ -141,6 +142,13 @@ func (j *shardedJanitor) Run(sc *shardedCache) {
 	}
 }
 
+func Shards(shards int) CacheOption {
+	return func(m *CacheOptions) error {
+		m.Shards = shards
+		return nil
+	}
+}
+
 func stopShardedJanitor(sc *unexportedShardedCache) {
 	sc.janitor.stop <- true
 }
@@ -153,7 +161,8 @@ func runShardedJanitor(sc *shardedCache, ci time.Duration) {
 	go j.Run(sc)
 }
 
-func newShardedCache(n int, de time.Duration) *shardedCache {
+func newShardedCache(opts *CacheOptions) *shardedCache {
+
 	max := big.NewInt(0).SetUint64(uint64(math.MaxUint32))
 	rnd, err := rand.Int(rand.Reader, max)
 	var seed uint32
@@ -165,27 +174,31 @@ func newShardedCache(n int, de time.Duration) *shardedCache {
 	}
 	sc := &shardedCache{
 		seed: seed,
-		m:    uint32(n),
-		cs:   make([]*cache, n),
+		m:    uint32(opts.Shards),
+		cs:   make([]*cache, opts.Shards),
 	}
-	for i := 0; i < n; i++ {
-		c := &cache{
-			defaultExpiration: de,
-			items:             map[string]Item{},
-		}
+	for i := 0; i < opts.Shards; i++ {
+		items := sync.Map{}
+		c := newunexportedCache(items, opts)
 		sc.cs[i] = c
 	}
 	return sc
 }
 
-func unexportedNewSharded(defaultExpiration, cleanupInterval time.Duration, shards int) *unexportedShardedCache {
-	if defaultExpiration == 0 {
-		defaultExpiration = -1
+func unexportedNewSharded(options ...CacheOption) *unexportedShardedCache {
+
+	opts := GetDefaultOptions()
+
+	for _, opt := range options {
+		if err := opt(opts); err != nil {
+			return nil
+		}
 	}
-	sc := newShardedCache(shards, defaultExpiration)
+
+	sc := newShardedCache(opts)
 	SC := &unexportedShardedCache{sc}
-	if cleanupInterval > 0 {
-		runShardedJanitor(sc, cleanupInterval)
+	if opts.CleanupInterval > 0 {
+		runShardedJanitor(sc, opts.CleanupInterval)
 		runtime.SetFinalizer(SC, stopShardedJanitor)
 	}
 	return SC
